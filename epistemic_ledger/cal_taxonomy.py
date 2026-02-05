@@ -91,7 +91,7 @@ class FailureModeEvaluator:
             self.failure_modes["None"] += 1
             return self.failure_modes
         
-        # Case 2: Unsound (one or more failure modes)
+        # Case 2: Underverified (any failure mode present)
         if bare_assertion:
             self.failure_modes["Bare Assertion"] += 1
         if overlooked_refutation:
