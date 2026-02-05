@@ -10,10 +10,11 @@ from glob import glob
 
 # Known baselines (for reference, any baseline name is accepted)
 KNOWN_BASELINES = [
-    "search-r1", "rag-r1", "asearcher", "dr-tulu", "webexplorer",
-    "tongyidr", "tongyidr-liveledger-20b", "react", "react_s1",
-    "react_liveledger", "hds", "hds-grpo", "search_o1_gpt-oss-20b",
-    "search_o1_gpt-oss-120b", "react_liveledger_20b_baseline", "react_liveledger_20b"
+    "search-r1", "hds", "rag-r1", "asearcher", "dr-tulu", "webexplorer",
+    "tongyidr", "tongyidr-liveledger-20b", 
+    "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
+    "react_20b", "react_liveledger_20b",
+    "react", "react_s1", "react_liveledger",
 ]
 
 DATASET_CHOICES = ["browsecomp", "deepsearchqa", "frames", "livedrbench", "webwalkerqa"]
@@ -32,10 +33,11 @@ def get_args():
         "--baseline_name", "-b",
         nargs="+", type=str,
         default=[
-            "search-r1", "rag-r1", "asearcher", "dr-tulu", "webexplorer",
-            "tongyidr", "tongyidr-liveledger-20b", "search_o1_gpt-oss-20b",
-            "react_liveledger_20b_baseline", "react_liveledger_20b",
-            "search_o1_gpt-oss-120b", "react", "react_s1", "react_liveledger"
+            "search-r1", "hds", "rag-r1", "asearcher", "dr-tulu", "webexplorer",
+            "tongyidr", "tongyidr-liveledger-20b", 
+            "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
+            "react_20b", "react_liveledger_20b",
+            "react", "react_s1", "react_liveledger"
         ],
         help=f"Baseline names. Known: {KNOWN_BASELINES}. Any baseline is supported."
     )
@@ -100,8 +102,6 @@ class FailureModeEvaluator:
             self.failure_modes["Premature Exit"] += 1
         
         if not (none or bare_assertion or overlooked_refutation or stagnation or premature_exit):
-            print(self.failure_modes)
-            print(json.dumps(ledgers[-1], indent=4))
             raise ValueError("No failure mode found")
         
         return self.failure_modes

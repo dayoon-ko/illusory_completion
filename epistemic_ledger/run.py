@@ -18,10 +18,11 @@ from prompts import prompt_checklist_generation, prompt_obj_ledger_update, promp
 
 # Known baselines with specific handling
 KNOWN_BASELINES = [
-    "search-r1", "rag-r1", "hds", "hds-grpo", "asearcher", "webexplorer",
-    "tongyidr", "tongyidr-liveledger-20b", "dr-tulu", "react", "react_s1",
-    "react_liveledger", "react_liveledger_20b", "react_liveledger_20b_baseline",
-    "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b"
+    "search-r1", "rag-r1", "hds", "hds-grpo", "asearcher", "webexplorer", "dr-tulu",
+    "tongyidr", "tongyidr-liveledger-20b", 
+    "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
+    "react_20b", "react_liveledger_20b",
+    "react", "react_s1", "react_liveledger",
 ]
 
 DATASET_CHOICES = ["all", "deepsearchqa", "browsecomp", "frames", "livedrbench", "webwalkerqa"]

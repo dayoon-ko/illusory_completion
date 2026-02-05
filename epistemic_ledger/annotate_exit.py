@@ -95,12 +95,7 @@ def call_llm(question, answer, predicted_answer):
                 }]
             )
             output = response.choices[0].message.content
-            output = output.replace("```json", "").replace("```", "")
-            
-            print("=" * 100)
-            print(f"question: {question}\nanswer: {answer}\npredicted_answer: {predicted_answer}\noutput: {output}")
-            print("=" * 100)
-            
+            output = output.replace("```json", "").replace("```", "")            
             output = json.loads(output)["verdict"]
             if type(output) == bool:
                 return output
@@ -295,18 +290,18 @@ BASELINE_CHECKERS = {
     "rag-r1": check_search_r1,
     "asearcher": check_asearcher,
     "webexplorer": check_webexplorer,
-    "tongyidr": check_webexplorer,
-    "tongyidr-liveledger-20b": check_webexplorer,
-    "react": check_react,
-    "react_s1": check_react,
-    "react_liveledger": check_react,
-    "react_liveledger_20b_baseline": check_react,
-    "react_liveledger_20b": check_react,
-    "search_o1_gpt-oss-20b": check_search_o1,
-    "search_o1_gpt-oss-120b": check_search_o1,
     "hds": check_hds,
     "hds-grpo": check_hds,
     "dr-tulu": check_dr_tulu,
+    "tongyidr": check_webexplorer,
+    "tongyidr-liveledger-20b": check_webexplorer,
+    "search_o1_gpt-oss-20b": check_search_o1,
+    "search_o1_gpt-oss-120b": check_search_o1,
+    "react_20b": check_react,
+    "react_liveledger_20b": check_react,
+    "react": check_react,
+    "react_s1": check_react,
+    "react_liveledger": check_react,
 }
 
 
@@ -342,10 +337,11 @@ def get_args():
         "--baseline_name", "-b",
         nargs="+", type=str,
         default=[
-            "tongyidr", "tongyidr-liveledger-20b",
+            "search-r1", "hds", "rag-r1", "asearcher", "dr-tulu", "webexplorer",
+            "tongyidr", "tongyidr-liveledger-20b", 
             "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
+            "react_20b", "react_liveledger_20b",
             "react", "react_s1", "react_liveledger",
-            "react_liveledger_20b_baseline", "react_liveledger_20b"
         ]
     )
     parser.add_argument(
