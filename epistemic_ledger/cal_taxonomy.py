@@ -14,7 +14,7 @@ KNOWN_BASELINES = [
     "tongyidr", "tongyidr-liveledger-20b", 
     "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
     "react_20b", "react_liveledger_20b",
-    "react", "react_s1", "react_liveledger",
+    "react", "react_tts", "react_liveledger",
 ]
 
 DATASET_CHOICES = ["browsecomp", "deepsearchqa", "frames", "livedrbench", "webwalkerqa"]
@@ -37,7 +37,7 @@ def get_args():
             "tongyidr", "tongyidr-liveledger-20b", 
             "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
             "react_20b", "react_liveledger_20b",
-            "react", "react_s1", "react_liveledger"
+            "react", "react_tts", "react_liveledger"
         ],
         help=f"Baseline names. Known: {KNOWN_BASELINES}. Any baseline is supported."
     )

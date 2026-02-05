@@ -300,7 +300,7 @@ BASELINE_CHECKERS = {
     "react_20b": check_react,
     "react_liveledger_20b": check_react,
     "react": check_react,
-    "react_s1": check_react,
+    "react_tts": check_react,
     "react_liveledger": check_react,
 }
 
@@ -341,7 +341,7 @@ def get_args():
             "tongyidr", "tongyidr-liveledger-20b", 
             "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
             "react_20b", "react_liveledger_20b",
-            "react", "react_s1", "react_liveledger",
+            "react", "react_tts", "react_liveledger",
         ]
     )
     parser.add_argument(

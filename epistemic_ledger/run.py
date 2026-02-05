@@ -22,14 +22,14 @@ KNOWN_BASELINES = [
     "tongyidr", "tongyidr-liveledger-20b", 
     "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
     "react_20b", "react_liveledger_20b",
-    "react", "react_s1", "react_liveledger",
+    "react", "react_tts", "react_liveledger",
 ]
 
 DATASET_CHOICES = ["all", "deepsearchqa", "browsecomp", "frames", "livedrbench", "webwalkerqa"]
 
 # Baseline groups for block extraction (only for baselines requiring special handling)
 BASELINES_RAW_TRAJECTORY = ["search-r1", "rag-r1", "hds", "hds-grpo"]
-BASELINES_TAO_S1 = ["react_s1"]  # Filters invalid tool calls
+BASELINES_TAO_S1 = ["react_tts"]  # Filters invalid tool calls
 BASELINES_TAOT = ["dr-tulu"]  # Pre-separated prev/next thinking
 
 

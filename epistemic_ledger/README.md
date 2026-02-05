@@ -146,7 +146,7 @@ python cal_taxonomy.py \
 ### Known Baselines (with specific handling)
 ```
 search-r1, rag-r1, hds, hds-grpo, asearcher, webexplorer,
-tongyidr, tongyidr-liveledger-20b, dr-tulu, react, react_s1,
+tongyidr, tongyidr-liveledger-20b, dr-tulu, react, react_tts,
 react_liveledger, react_liveledger_20b, react_liveledger_20b_baseline,
 search_o1_gpt-oss-20b, search_o1_gpt-oss-120b
 ```
