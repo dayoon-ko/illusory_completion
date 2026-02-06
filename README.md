@@ -105,8 +105,9 @@ ledger = {
         "constraints": {
             "C1": {
                 "obj": true,              # Objective: proven with evidence
-                "obj_evidence": "quote",  # Supporting evidence
+                "obj_evidence": "quote",  # Quote for supporting evidence
                 "per": true               # Perceived: agent's belief
+                "per_evidence": "quot",   # Quote for agent's belief
             }
         }
     }
