@@ -1,5 +1,7 @@
 # Is Enough Not Enough? Illusory Completion 🧠 in Search Agents 🔍
 
+[![Static Badge](https://img.shields.io/badge/Paper-arXiv-b5212f.svg?logo=arxiv)](https://arxiv.org/abs/2602.07549)
+
 This repository contains implementations of the paper **"Is Enough Not Enough? Illusory Completion in Search Agents."**
 
 We present a novel framework for analyzing failure modes in agentic search systems through **epistemic ledger tracking**, which systematically evaluates whether agents properly verify constraints before claiming task completion.
