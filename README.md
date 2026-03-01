@@ -1,7 +1,9 @@
 <h1 align="center">Is Enough Not Enough?<br> Illusory Completion 🧠 in Search Agents 🔍</h1>
 
-<div align="center">
+<div align="center"> 
+    
 [![Static Badge](https://img.shields.io/badge/Paper-arXiv-b5212f.svg?logo=arxiv)](https://arxiv.org/abs/2602.07549)
+
 </div>
 
 This repository contains implementations of the paper **"Is Enough Not Enough? Illusory Completion in Search Agents."**
