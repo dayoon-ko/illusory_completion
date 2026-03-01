@@ -1,5 +1,6 @@
 <div align="center"> 
-# Is Enough Not Enough? \\Illusory Completion 🧠 in Search Agents 🔍
+# Is Enough Not Enough?
+# Illusory Completion 🧠 in Search Agents 🔍
 
 [![Static Badge](https://img.shields.io/badge/Paper-arXiv-b5212f.svg?logo=arxiv)](https://arxiv.org/abs/2602.07549)
 </div>
