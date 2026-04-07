@@ -1,4 +1,4 @@
-<h1 align="center">Is Enough Not Enough?<br> Illusory Completion 🧠 in Search Agents 🔍</h1>
+<h1 align="center">When is Enough Not Enough?<br> Illusory Completion 🧠 in Search Agents 🔍</h1>
 
 <div align="center"> 
     
@@ -134,11 +134,14 @@ ledger = {
 ## Citation (TBD)
 
 ```bibtex
-@article{illusory2024,
-  title={Is Enough Not Enough? Illusory Completion in Search Agents},
-  author={Your Name et al.},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2024}
+@misc{ko2026enoughillusorycompletionsearch,
+      title={When Is Enough Not Enough? Illusory Completion in Search Agents}, 
+      author={Dayoon Ko and Jihyuk Kim and Sohyeon Kim and Haeju Park and Dahyun Lee and Gunhee Kim and Moontae Lee and Kyungjae Lee},
+      year={2026},
+      eprint={2602.07549},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2602.07549}, 
 }
 ```
 
@@ -148,6 +151,5 @@ Apache 2.0
 
 ## Contact
 
-- Paper: [arXiv link] (TBD)
-- Issues: [GitHub Issues](https://github.com/your-org/illusory-completion/issues)
-- Email: your.email@institution.edu
+- Paper: [https://arxiv.org/pdf/2602.07549](https://arxiv.org/abs/2602.07549)
+- Email: dayoon.ko@vision.snu.ac.kr
