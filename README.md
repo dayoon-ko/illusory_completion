@@ -14,16 +14,26 @@ We present a novel framework for analyzing failure modes in agentic search syste
 
 ```
 .
-├── dataset/               # Benchmark datasets for agentic search evaluation
-├── liveledger/           # Live epistemic ledger agent implementation
-└── epistemic_ledger/     # Post-hoc epistemic ledger evaluation pipeline
+├── liveledger/           # LiveLedger: three-phase epistemic agent
+│   ├── run.py            # Main agent (extract → search → update ledger)
+│   ├── run_baseline.py   # ReAct baseline without ledger
+│   ├── prompt.py         # System prompts
+│   ├── tools.py          # Tool definitions (extract/search/update)
+│   ├── utils.py          # EpistemicLedger, AgentStateMachine
+│   ├── search_engine.py  # Serper (web search) + Jina (page reader)
+│   └── train/            # SFT training pipeline
+├── epistemic_ledger/     # Post-hoc evaluation framework
+│   ├── build_ledger.py   # Build (candidate × constraint) ledger from any trajectory
+│   ├── evaluate.py       # LLM-as-judge answer correctness
+│   ├── accuracy.py       # Correct/Incorrect × Verified/Underverified classification
+│   ├── failure_modes.py  # Failure mode taxonomy
+│   └── prompts.py        # Constraint extraction + ledger update prompts
+├── baselines/            # Baseline runners + sample results
+│   ├── run_tag_search.py # Unified runner for tag-based baselines
+│   └── results/          # Sample result files
+├── datasets/             # Benchmark datasets
+└── run_evaluation.py     # End-to-end evaluation pipeline
 ```
-
-| Component | Purpose | Documentation |
-|-----------|---------|---------------|
-| **dataset/** | Constraint-based benchmark datasets | [datasets/README.md](dataset/README.md) |
-| **liveledger/** | Real-time epistemic ledger agent | [liveledger/README.md](liveledger/README.md) |
-| **epistemic_ledger/** | Post-hoc trajectory analysis | [epistemic_ledger/README.md](epistemic_ledger/README.md) |
 
 ## Key Contributions
 
@@ -37,43 +47,72 @@ We present a novel framework for analyzing failure modes in agentic search syste
 ### Installation
 
 ```bash
-git clone https://github.com/your-org/illusory-completion.git
-cd illusory-completion
+git clone https://github.com/dayoon-ko/illusory_completion.git
+cd illusory_completion
 pip install -r requirements.txt
 
 # Set API keys
 export SERPER_API_KEY="your-serper-key"
 export JINA_API_KEY="your-jina-key"
-export OPENAI_API_KEY="your-openai-key"
 ```
 
-### Run Live Ledger Agent
+### 1. Start vLLM Server
 
 ```bash
-# Start vLLM server
-vllm serve openai/gpt-oss-120b --port 8000
+# Qwen3.5-27B (8 GPUs)
+vllm serve Qwen/Qwen3.5-27B --port 8000 --tensor-parallel-size 8 \
+  --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder \
+  --enable-prefix-caching --enforce_eager
+```
 
-# Run agent
+### 2. Run LiveLedger Agent
+
+```bash
 cd liveledger
-python run.py --dataset_names frames --num_workers 4
+python run.py \
+  --model_name Qwen/Qwen3.5-27B \
+  -o outputs \
+  -w 4 \
+  -d browsecomp frames deepsearchqa
 ```
 
-See [liveledger/README.md](liveledger/README.md) for detailed usage.
-
-### Evaluate Existing Baseline
+### 3. Run Baseline (without ledger)
 
 ```bash
-cd epistemic_ledger
-python run.py -b your_baseline -d frames --max_workers 4
-python annotate_exit.py -b your_baseline -d frames
-python cal_acc.py -b your_baseline -d frames
-python cal_taxonomy.py -b your_baseline -d frames -o all
+cd liveledger
+python run_baseline.py --model_name Qwen/Qwen3.5-27B -o outputs_baseline -d browsecomp
 ```
 
-See [epistemic_ledger/README.md](epistemic_ledger/README.md) for detailed usage.
+### 4. Run Tag-Based Baselines
 
+```bash
+cd baselines
+python run_tag_search.py -b search-r1 -d browsecomp frames --search_engine serper
+```
 
-## Supported Datasets (Multi-Constraint Problems)
+Supported: `search-r1`, `smartsearch`, `rag-r1`, `reseek`, `hiprag`
+
+### 5. Evaluate
+
+```bash
+# LiveLedger outputs (ledger already built inline)
+python run_evaluation.py --output_dir liveledger/outputs --has_ledger
+
+# Baseline outputs (build ledger post-hoc, then evaluate)
+python run_evaluation.py --output_dir baselines/outputs/search-r1 \
+  --baseline_name search-r1 --base_url http://localhost:8000/v1
+```
+
+### 6. SFT Training
+
+```bash
+cd liveledger/train
+python curate_sft_data.py --input_dir ../outputs --output_dir sft_data
+python train_sft.py --model_name Qwen/Qwen3.5-27B --dataset_path sft_data
+python eval_checkpoint.py --checkpoint_dir output/checkpoint-xxx -d browsecomp
+```
+
+## Supported Datasets
 
 ```
 browsecomp      # Browse & compose multi-hop questions
@@ -81,25 +120,10 @@ deepsearchqa    # Deep research questions requiring synthesis
 frames          # Multi-constraint factual questions
 livedrbench     # Real-time information retrieval
 webwalkerqa     # Web navigation questions
+bioasq          # Biomedical question answering
 ```
 
-Dataset files: `dataset/{dataset_name}/test_mcqa.jsonl`
-
-## Requirements
-
-### System
-- Python 3.8+
-- CUDA-compatible GPU (80GB+ VRAM for 120B models)
-
-### API Keys
-- **Serper**: Web search ([serper.dev](https://serper.dev))
-- **Jina Reader**: Web content ([jina.ai/reader](https://jina.ai/reader))
-- **OpenAI**: Answer evaluation ([platform.openai.com](https://platform.openai.com))
-
-### Python Packages
-```bash
-pip install vllm openai httpx requests urllib3
-```
+Dataset files: `datasets/{dataset_name}/test_mcqa.jsonl`
 
 ## Epistemic Ledger Concept
 
@@ -111,9 +135,7 @@ ledger = {
         "constraints": {
             "C1": {
                 "obj": true,              # Objective: proven with evidence
-                "obj_evidence": "quote",  # Quote for supporting evidence
-                "per": true               # Perceived: agent's belief
-                "per_evidence": "quot",   # Quote for agent's belief
+                "obj_evidence": "quote",  # Supporting evidence
             }
         }
     }
@@ -131,7 +153,17 @@ ledger = {
 - No progress 3+ turns: **Stagnation**
 - Exit with unverified: **Premature Exit**
 
-## Citation (TBD)
+## Requirements
+
+### System
+- Python 3.8+
+- CUDA-compatible GPU (80GB+ VRAM for large models)
+
+### API Keys
+- **Serper**: Web search ([serper.dev](https://serper.dev))
+- **Jina Reader**: Web content ([jina.ai/reader](https://jina.ai/reader))
+
+## Citation
 
 ```bibtex
 @misc{ko2026enoughillusorycompletionsearch,
@@ -151,5 +183,5 @@ Apache 2.0
 
 ## Contact
 
-- Paper: [https://arxiv.org/pdf/2602.07549](https://arxiv.org/abs/2602.07549)
+- Paper: [https://arxiv.org/abs/2602.07549](https://arxiv.org/abs/2602.07549)
 - Email: dayoon.ko@vision.snu.ac.kr

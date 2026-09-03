@@ -1,3 +1,4 @@
+"""Baseline ReAct agent without epistemic ledger."""
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -31,6 +32,19 @@ from utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Field name for the model's chain of thought moved between vLLM releases: older
+# builds return `reasoning_content`, current ones return `reasoning` and omit
+# `reasoning_content` entirely. Reading only the old name yields "" on every
+# call, which silently disabled the parse_boxed() fallback below that recovers
+# an answer the model put in its reasoning rather than its content.
+def reasoning_of(message: dict) -> str:
+    """Return the reasoning text under whichever field this vLLM uses."""
+    for key in ("reasoning_content", "reasoning"):
+        value = message.get(key)
+        if value:
+            return value
+    return ""
 
 
 def build_openai_client(base_url: str, api_key: str) -> OpenAI:
@@ -213,7 +227,7 @@ def run_turn(
                     continue
             else:
                 content = message.get("content") or ""
-                reasoning = message.get("reasoning_content") or ""
+                reasoning = reasoning_of(message)
                 if not content and not reasoning:
                     continue
                 else:
@@ -255,9 +269,14 @@ def run_model(
 
     turn = 0
     start_time = time.time()
+    # Cost instrumentation mirroring run.py's `timing`, so the no-ledger arm can be compared
+    # with the LiveLedger arm on the same basis (added 2026-07-26; before this the baseline
+    # persisted neither a timing breakdown nor the agent's reasoning text).
+    timing = {"search_llm": 0.0, "tools": 0.0, "completion_tokens": 0}
 
     while True:
         turn += 1
+        _t_llm = time.time()
         resp_json = run_turn(
             client=client,
             model_name=args.model_name,
@@ -268,11 +287,13 @@ def run_model(
             max_tokens=args.max_tokens,
             max_query_retries=args.max_query_retries,
         )
+        timing["search_llm"] += time.time() - _t_llm
+        timing["completion_tokens"] += ((resp_json.get("usage") or {}).get("completion_tokens") or 0)
 
         choice = resp_json["choices"][0]
         message = choice.get("message", {})
         finish_reason = choice.get("finish_reason")
-        reasoning_content = message.get("reasoning_content") or ""
+        reasoning_content = reasoning_of(message)
         response_content = message.get("content") or ""
 
         log_event("THINK", reasoning_content, ANSI_THINK)
@@ -299,15 +320,29 @@ def run_model(
                 fn_args = _parse_tool_args(tool_call_arguments)
 
                 if fn_name == "search":
-                    queries = fn_args.get("query", fn_args.get("queries", []))
-                    if isinstance(queries, str):
-                        queries = [queries]
+                    if isinstance(fn_args, list):
+                        queries = fn_args
+                    elif isinstance(fn_args, str):
+                        queries = [fn_args]
+                    else:
+                        queries = fn_args.get("query", fn_args.get("queries", []))
+                        if isinstance(queries, str):
+                            queries = [queries]
+                    _t_tool = time.time()
                     tool_result = search_engine.search_batch(queries)
+                    timing["tools"] += time.time() - _t_tool
                 elif fn_name == "browse":
-                    urls = fn_args.get("urls", fn_args.get("url", []))
-                    if isinstance(urls, str):
-                        urls = [urls]
+                    if isinstance(fn_args, list):
+                        urls = fn_args
+                    elif isinstance(fn_args, str):
+                        urls = [fn_args]
+                    else:
+                        urls = fn_args.get("urls", fn_args.get("url", []))
+                        if isinstance(urls, str):
+                            urls = [urls]
+                    _t_tool = time.time()
                     tool_result = browser.browse_batch(urls)
+                    timing["tools"] += time.time() - _t_tool
                 else:
                     continue
 
@@ -322,21 +357,22 @@ def run_model(
             assistant_message = {
                 "role": "assistant",
                 "content": response_content,
+                "reasoning_content": reasoning_content,
                 "tool_calls": tool_calls,
             }
             messages.append(assistant_message)
             messages.extend(tool_messages)
 
             if turn >= args.max_turns:
-                return response_content, messages, "", turn, time.time() - start_time
+                return response_content, messages, "", turn, time.time() - start_time, timing
             continue
 
         if finish_reason in {"stop", "length"}:
             prediction = parse_boxed(response_content) or parse_boxed(reasoning_content)
             latency_sec = time.time() - start_time
-            return response_content, messages, prediction, turn, latency_sec
+            return response_content, messages, prediction, turn, latency_sec, timing
 
-        return response_content, messages, "", turn, time.time() - start_time
+        return response_content, messages, "", turn, time.time() - start_time, timing
 
 
 class DataLoader:
@@ -417,7 +453,7 @@ def process_item(
     answer = item["answer"]
 
     try:
-        content, messages, prediction, turns, latency = run_model(
+        content, messages, prediction, turns, latency, timing = run_model(
             question=question,
             args=args,
             search_engine=search_engine,
@@ -433,6 +469,7 @@ def process_item(
             "turns": turns,
             "latency": latency,
             "elapsed_time": latency,
+            "timing": timing,
             "status": "success",
         }
 
@@ -484,20 +521,20 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "-d",
         nargs="+",
         type=str,
-        default=["frames", "browsecomp", "deepsearchqa", "livedrbench", "webwalkerqa"],
-        choices=["frames", "browsecomp", "deepsearchqa", "livedrbench", "webwalkerqa"],
+        default=["frames", "browsecomp", "deepsearchqa", "livedrbench", "webwalkerqa", "bioasq"],
+        choices=["frames", "browsecomp", "deepsearchqa", "livedrbench", "webwalkerqa", "bioasq"],
     )
     parser.add_argument("--start_idx", type=int, default=0)
     parser.add_argument("--end_idx", type=int, default=None)
-    parser.add_argument("--output_dir", "-o", type=str, default="outputs_baseline")
+    parser.add_argument("--output_dir", "-o", type=str, default="outputs_7B")
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=16,
+        default=64,
         help="Number of parallel workers for processing",
     )
 
-    parser.add_argument("--model_name", "-m", default="openai/gpt-oss-120b")
+    parser.add_argument("--model_name", "-m", default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument(
         "--reasoning-effort",
         default="high",
@@ -506,7 +543,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=1.0, dest="top_p")
-    parser.add_argument("--max-tokens", type=int, default=32768, dest="max_tokens")
+    # 8192 to match run.py's per-call budget. At 2048 gpt-oss-20b hit the cap on its
+    # longer reasoning turns, and finish_reason="length" is treated as a final answer
+    # below, so the agent silently stopped mid-trajectory — the no-ledger arm looked
+    # like it "chose" to answer after 3 searches. Keep this equal to run.py's value:
+    # it is a confound, not a hyperparameter, in any with/without-ledger comparison.
+    parser.add_argument("--max-tokens", type=int, default=8192, dest="max_tokens")
     parser.add_argument(
         "--system-message",
         default=SYSTEM_PROMPT_MAIN_WO_LEDGER,
@@ -588,7 +630,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not question:
             raise ValueError("Question must be a non-empty string.")
 
-        content, messages, prediction, turns, latency_sec = run_model(
+        content, messages, prediction, turns, latency_sec, _timing = run_model(
             question=question,
             args=args,
             search_engine=search_engine,

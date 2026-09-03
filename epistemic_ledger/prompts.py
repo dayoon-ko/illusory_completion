@@ -216,7 +216,7 @@ The answer is in Europe, has 67 million people, uses the Pound. I'll answer UK.
 
 prompt_per_ledger_update = """You are a Perception & Status Ledger Annotator. Your ONLY job is to update:
 - candidate `status` (active|stored|rejected)
-- each constraint's `per` and `per_evidence`
+- each constraint’s `per` and `per_evidence`
 
 You MUST capture what the agent BELIEVES in the thinking text, even if it is wrong or unsupported.
 

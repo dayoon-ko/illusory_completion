@@ -1,10 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, List
 
-# ============================================================================
-# TOOLS - Separated by phase
-# ============================================================================
-
 TOOLS_EXTRACT: List[Dict[str, Any]] = [
     {
         "type": "function",

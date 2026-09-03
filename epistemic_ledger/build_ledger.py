@@ -2,7 +2,7 @@ import json
 import os
 import re
 import time
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple 
 
 from openai import OpenAI
 from argparse import ArgumentParser
@@ -11,25 +11,33 @@ from tqdm import tqdm
 
 from prompts import prompt_checklist_generation, prompt_obj_ledger_update, prompt_per_ledger_update
 
-
 # =============================================================================
 # Constants
 # =============================================================================
 
 # Known baselines with specific handling
 KNOWN_BASELINES = [
-    "search-r1", "rag-r1", "hds", "hds-grpo", "asearcher", "webexplorer", "dr-tulu",
-    "tongyidr", "tongyidr-liveledger-20b", 
-    "search_o1_gpt-oss-20b", "search_o1_gpt-oss-120b",
-    "react_20b", "react_liveledger_20b",
-    "react", "react_tts", "react_liveledger",
+    "search-r1", "search-r1_2", "search-r1_3", 
+    "rag-r1", "rag-r1_2", "rag-r1_3", 
+    "asearcher", "asearcher_2", "asearcher_3", 
+    "dr-tulu", "dr-tulu_2", "dr-tulu_3",
+    "webexplorer", "webexplorer_2", "webexplorer_3", 
+    "search_o1_gpt-oss-20b", "search_o1_gpt-oss-20b_2", "search_o1_gpt-oss-20b_3", 
+    "search_o1_gpt-oss-120b", "search_o1_gpt-oss-120b_2", "search_o1_gpt-oss-120b_3",   
+    "tongyidr", "tongyidr_2", "tongyidr_3", 
+    "tongyidr-liveledger-4B", "tongyidr-liveledger-4B_2", "tongyidr-liveledger-4B_3", 
+    "react_20B", "react_20B_2", "react_20B_3",
+    "react_20B_liveledger_4B", "react_20B_liveledger_4B_2", "react_20B_liveledger_4B_3",
+    "react", "react_2", "react_3",
+    "react_s1", "react_s1_2", "react_s1_3",
+    "react_120B_liveledger_4B", "react_120B_liveledger_4B_2", "react_120B_liveledger_4B_3",
 ]
 
-DATASET_CHOICES = ["all", "deepsearchqa", "browsecomp", "frames", "livedrbench", "webwalkerqa"]
+DATASET_CHOICES = ["all", "deepsearchqa", "browsecomp", "frames", "livedrbench", "webwalkerqa", "bioasq"]
 
 # Baseline groups for block extraction (only for baselines requiring special handling)
 BASELINES_RAW_TRAJECTORY = ["search-r1", "rag-r1", "hds", "hds-grpo"]
-BASELINES_TAO_S1 = ["react_tts"]  # Filters invalid tool calls
+BASELINES_TAO_S1 = ["react_s1"]  # Filters invalid tool calls
 BASELINES_TAOT = ["dr-tulu"]  # Pre-separated prev/next thinking
 
 
@@ -45,14 +53,16 @@ class JudgeAgent:
     """
     
     def __init__(
-        self, 
+        self,
         model_name: str = "openai/gpt-oss-120b",
         base_url: str = "http://localhost:8000/v1",
-        api_key: str = "EMPTY"
+        api_key: str = "EMPTY",
+        reasoning_effort: Optional[str] = None
     ):
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
+        self.reasoning_effort = reasoning_effort
         self._client = None
         
         # State
@@ -72,15 +82,18 @@ class JudgeAgent:
     
     def call_llm(self, prompt: str) -> Dict[str, Any]:
         """Call the LLM with retry logic."""
+        extra_body = {}
+        if self.reasoning_effort is not None:
+            extra_body["reasoning_effort"] = self.reasoning_effort
         while True:
             try:
                 response = self.client.chat.completions.create(
                     model=self.model_name,
-                    messages=[{"role": "user", "content": prompt}]
+                    messages=[{"role": "user", "content": prompt}],
+                    extra_body=extra_body if extra_body else None
                 )
                 output = response.choices[0].message.content
                 output = output.replace("```json", "").replace("```", "")
-                print(output)
                 return json.loads(output)
             except Exception as e:
                 print(e)
@@ -371,17 +384,18 @@ def extract_blocks_for_baseline(item, baseline_name):
     4. Raw trajectory parsing for legacy baselines
     """
     output = item["output"]
-    
+    base_name = re.sub(r"_[23]$", "", baseline_name)
+
     # 1. Handle baselines with special requirements
-    if baseline_name in BASELINES_RAW_TRAJECTORY:
+    if base_name in BASELINES_RAW_TRAJECTORY:
         # Raw trajectory string that needs parsing
-        return get_blocks(output, baseline_name)
-    
-    if baseline_name in BASELINES_TAO_S1:
+        return get_blocks(output, base_name)
+
+    if base_name in BASELINES_TAO_S1:
         # TAO format but filters invalid tool calls
         return get_tao_blocks_s1(output)
-    
-    if baseline_name in BASELINES_TAOT:
+
+    if base_name in BASELINES_TAOT:
         # Pre-separated prev/next thinking blocks
         return get_taot_blocks(output)
     
@@ -410,7 +424,7 @@ def extract_blocks_for_baseline(item, baseline_name):
 # Processing Functions
 # =============================================================================
 
-def process_item(item, model_name, baseline_name, output_path, max_turns=None, is_save_blocks=False):
+def process_item(item, model_name, baseline_name, output_path, base_url="http://localhost:8000/v1", max_turns=None, is_save_blocks=False, reasoning_effort=None):
     """Process a single item: generate checklist and build ledger."""
     
     # Validation
@@ -425,7 +439,7 @@ def process_item(item, model_name, baseline_name, output_path, max_turns=None, i
     print(f"Processing {output_path}")
     
     # Initialize judge agent
-    judge = JudgeAgent(model_name=model_name)
+    judge = JudgeAgent(model_name=model_name, base_url=base_url, reasoning_effort=reasoning_effort)
     
     # Step 1: Generate checklist
     judge.generate_checklist(item)
@@ -470,16 +484,22 @@ def get_args():
     parser.add_argument(
         "--dataset_name", "-d",
         nargs="+", type=str,
-        default=["browsecomp", "frames", "livedrbench", "deepsearchqa", "webwalkerqa"],
+        default=["frames", "browsecomp", "livedrbench", "deepsearchqa", "webwalkerqa", "bioasq"],
         choices=DATASET_CHOICES
     )
+    parser.add_argument("--base_url", type=str, default="http://localhost:8000/v1")
     parser.add_argument("--num_try", type=int, default=0)
-    parser.add_argument("--input_dir", type=str, default="data")
-    parser.add_argument("--output_dir", "-o", type=str, default="output/epistemic_ledger")
+    parser.add_argument("--input_dir", type=str, default="../baselines/results")
+    parser.add_argument("--output_dir", "-o", type=str, default="epistemic_ledger")
     parser.add_argument("--model_name", type=str, default="openai/gpt-oss-120b")
-    parser.add_argument("--max_turns", type=int, default=None)
+    parser.add_argument("--max_turns", type=int, default=30)
     parser.add_argument("--is_save_blocks", action="store_true", default=False)
-    parser.add_argument("--max_workers", type=int, default=8)
+    parser.add_argument("--max_workers", "-w", type=int, default=64)
+    parser.add_argument(
+        "--reasoning_effort", type=str, default="medium",
+        choices=["low", "medium", "high"],
+        help="Reasoning effort for gpt-oss models (passed via extra_body to vLLM)."
+    )
     return parser.parse_args()
 
 
@@ -531,8 +551,10 @@ def main(args):
                 task["model_name"],
                 task["baseline_name"],
                 task["output_path"],
+                base_url=args.base_url,
                 max_turns=task["max_turns"],
-                is_save_blocks=task["is_save_blocks"]
+                is_save_blocks=task["is_save_blocks"],
+                reasoning_effort=args.reasoning_effort
             ): task for task in all_tasks
         }
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing all datasets"):
