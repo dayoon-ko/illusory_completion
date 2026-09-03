@@ -1,0 +1,17 @@
+[project]
+name = "illusory-completion"
+version = "0.1.0"
+description = "Epistemic ledger framework for detecting illusory completions in search agents"
+requires-python = ">=3.11"
+dependencies = [
+    "openai",
+    "httpx",
+    "requests",
+    "torch>=2.4.0",
+    "transformers",
+    "datasets",
+    "tqdm",
+    "urllib3",
+    "ms-swift",
+    "accelerate",
+]
