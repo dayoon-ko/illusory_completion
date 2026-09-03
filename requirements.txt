@@ -1,0 +1,10 @@
+openai
+httpx
+requests
+torch>=2.4.0
+transformers
+datasets
+tqdm
+urllib3
+ms-swift
+accelerate
