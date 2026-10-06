@@ -7,7 +7,7 @@
 
 </div>
 
-Code for the paper **"When Is Enough Not Enough? Illusory Completion in Search Agents"** (arXiv v2).
+Code for the paper **"When Is Enough Not Enough? Illusory Completion in Search Agents"**.
 
 Search agents often **stop while some constraints of the question are still unverified** (illusory completion).
 This repo has three parts:
