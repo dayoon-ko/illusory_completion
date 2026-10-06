@@ -154,10 +154,6 @@ Trained agents (Search-R1, ASearcher, RAG-R1, DR-Tulu, WebExplorer, TongyiDR) an
 
 ---
 
-## Previous version
-
-The code for arXiv v1 (February 2026) is under the git tag [`v1`](https://github.com/dayoon-ko/illusory_completion/tree/v1).
-
 ## Citation
 
 ```bibtex
