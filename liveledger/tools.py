@@ -1,5 +1,7 @@
+"""Tool schemas: extract_constraints and update_ledger (tracker), search and browse (agent)."""
 from __future__ import annotations
 from typing import Any, Dict, List
+
 
 TOOLS_EXTRACT: List[Dict[str, Any]] = [
     {

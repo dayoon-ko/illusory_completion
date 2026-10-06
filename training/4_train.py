@@ -1,15 +1,15 @@
-"""
-SFT training using Swift Python API with Seq2SeqTrainer.
+"""Step 4: full-parameter SFT of Qwen/Qwen3.5-4B on the step-3 data with ms-swift (the released dayoon/LiveLedger-4B).
 
-Usage:
-    # Single node, all GPUs
-    torchrun --nproc_per_node=8 4_train_sft.py
+Tools are inlined into the system message and tool calls into the assistant text (Qwen3.5 <tool_call> format);
+examples longer than --max_length tokens are dropped; the rest is shuffled (--seed) and split 90/10 into train/val.
+One checkpoint per epoch. Released checkpoint: epoch 2 (step 52 of 260) of the run below.
 
-    # With deepspeed
-    torchrun --nproc_per_node=8 4_train_sft.py --deepspeed ds_zero3_offload.json
+    # paper run: 16 GPUs (2 nodes x 8), 1 x 8 grad-accum x 16 = 128 sequences per step, 10 epochs
+    torchrun --nnodes 2 --nproc_per_node 8 ... training/4_train.py --data_dir sft_data \
+        --deepspeed training/ds_zero3_offload.json
+    # one 8-GPU node, same effective batch: add --grad_accum 16
 
-    # Custom settings
-    torchrun --nproc_per_node=8 4_train_sft.py --model Qwen/Qwen3.5-4B --lr 1e-5 --epochs 10
+    python training/merge_for_vllm.py --checkpoint_dir <run>/checkpoint-52 --output_dir LiveLedger-4B   # to serve with vLLM
 """
 
 import argparse
@@ -107,10 +107,10 @@ def load_and_preprocess(data_files, max_length, tokenizer, seed=42):
 
 def main():
     parser = argparse.ArgumentParser(description="SFT training with Swift Python API")
-    parser.add_argument("--data_dir", type=str, default="training_data")
+    parser.add_argument("--data_dir", type=str, default="sft_data")
     parser.add_argument("--task", "-t", type=str, default="both",
                         choices=["extract", "update", "both"])
-    parser.add_argument("--model", "-m", type=str, default="Qwen/Qwen3.5-9B")
+    parser.add_argument("--model", "-m", type=str, default="Qwen/Qwen3.5-4B")
     parser.add_argument("--output_dir", "-o", type=str, default="sft_output")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=3e-5)

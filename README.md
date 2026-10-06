@@ -1,187 +1,181 @@
-<h1 align="center">When is Enough Not Enough?<br> Illusory Completion 🧠 in Search Agents 🔍</h1>
+<h1 align="center">When Is Enough Not Enough?<br> Illusory Completion 🧠 in Search Agents 🔍</h1>
 
-<div align="center"> 
-    
-[![Static Badge](https://img.shields.io/badge/Paper-arXiv-b5212f.svg?logo=arxiv)](https://arxiv.org/abs/2602.07549)
+<div align="center">
+
+[![Paper](https://img.shields.io/badge/Paper-arXiv-b5212f.svg?logo=arxiv)](https://arxiv.org/abs/2602.07549)
+[![Model](https://img.shields.io/badge/Model-LiveLedger--4B-ffd21e.svg?logo=huggingface)](https://huggingface.co/dayoon/LiveLedger-4B)
 
 </div>
 
-This repository contains implementations of the paper **"Is Enough Not Enough? Illusory Completion in Search Agents."**
+Code for the paper **"When Is Enough Not Enough? Illusory Completion in Search Agents"** (arXiv v2).
 
-We present a novel framework for analyzing failure modes in agentic search systems through **epistemic ledger tracking**, which systematically evaluates whether agents properly verify constraints before claiming task completion.
+Search agents often **stop while some constraints of the question are still unverified** (illusory completion).
+This repo has three parts:
+
+| Part | What it does |
+|---|---|
+| **Run an agent** (`liveledger/`) | ReAct agent with `search` + `browse`, with or without the **LiveLedger** tracker (a 4B model that shows the agent which constraints are verified) |
+| **Evaluate** (`epistemic_ledger/`) | Builds the **Epistemic Ledger** of any trajectory, judges the answer, and reports **Acc** and **UAR** |
+| **Train the tracker** (`training/`) | How `dayoon/LiveLedger-4B` was trained |
+
+```
+ question ──▶ agent (+ LiveLedger) ──▶ trajectory ──▶ Epistemic Ledger ──▶ judge ──▶ Acc, UAR, constraint outcomes
+              liveledger/run.py                       build_ledger.py        judge.py   metrics.py
+```
+
+---
 
 ## Repository Overview
 
 ```
 .
-├── liveledger/           # LiveLedger: three-phase epistemic agent
-│   ├── run.py            # Main agent (extract → search → update ledger)
-│   ├── run_baseline.py   # ReAct baseline without ledger
-│   ├── prompt.py         # System prompts
-│   ├── tools.py          # Tool definitions (extract/search/update)
-│   ├── utils.py          # EpistemicLedger, AgentStateMachine
-│   ├── search_engine.py  # Serper (web search) + Jina (page reader)
-│   └── train/            # SFT training pipeline
-├── epistemic_ledger/     # Post-hoc evaluation framework
-│   ├── build_ledger.py   # Build (candidate × constraint) ledger from any trajectory
-│   ├── evaluate.py       # LLM-as-judge answer correctness
-│   ├── accuracy.py       # Correct/Incorrect × Verified/Underverified classification
-│   ├── failure_modes.py  # Failure mode taxonomy
-│   └── prompts.py        # Constraint extraction + ledger update prompts
-├── baselines/            # Baseline runners + sample results
-│   ├── run_tag_search.py # Unified runner for tag-based baselines
-│   └── results/          # Sample result files
-├── datasets/             # Benchmark datasets
-└── run_evaluation.py     # End-to-end evaluation pipeline
+├── liveledger/            # run an agent (with / without the tracker)
+│   ├── run.py             #   the runner (one JSON per question)
+│   ├── ledger.py          #   the ledger table the agent sees
+│   ├── prompts.py         #   tracker prompts (constraint extraction, ledger update)
+│   ├── tools.py           #   tool schemas
+│   └── search.py          #   Serper search + Jina page reader
+├── epistemic_ledger/      # evaluate trajectories
+│   ├── build_ledger.py    #   1. Epistemic Ledger (gpt-5-nano)
+│   ├── judge.py           #   2. answer correctness (gpt-5.6-sol)
+│   ├── metrics.py         #   3. Acc, UAR, Verified / Assumed / Refuted / Unchecked
+│   ├── ledger_merge.py    #   keeps evidence once found (used for every number)
+│   ├── prompts.py         #   evaluator prompts
+│   └── judge_prompts.py   #   judge prompts
+├── training/              # train the 4B tracker
+├── baselines/             # runner for tag-based agents (Search-R1, RAG-R1, ...) + example outputs
+└── datasets/              # the 484 questions (6 benchmarks)
 ```
 
-## Key Contributions
+---
 
-1. **Epistemic Ledger Framework**: Structured constraint verification tracking
-2. **Failure Mode Taxonomy**: Bare Assertion, Overlooked Refutation, Stagnation, Premature Exit
-3. **Live Ledger Agent**: Three-phase agent with real-time verification
-4. **Evaluation Pipeline**: Automated analysis of existing agent trajectories
-
-## Quick Start
-
-### Installation
+## Run it in 4 steps
 
 ```bash
-git clone https://github.com/dayoon-ko/illusory_completion.git
-cd illusory_completion
-pip install -r requirements.txt
+# 1. install
+git clone https://github.com/dayoon-ko/illusory_completion.git && cd illusory_completion
+pip install -r requirements.txt            # + `pip install vllm` on the GPU machine that serves the models
 
-# Set API keys
-export SERPER_API_KEY="your-serper-key"
-export JINA_API_KEY="your-jina-key"
+# 2. keys
+export SERPER_API_KEY=...                  # web search  (serper.dev)
+export JINA_API_KEY=...                    # page reader (jina.ai/reader)
+export OPENAI_API_KEY=...                  # evaluation only (gpt-5-nano ledger, gpt-5.6-sol judge)
+
+# 3. serve the agent and the tracker (two vLLM servers)
+vllm serve openai/gpt-oss-120b --port 8000 --enable-auto-tool-choice --tool-call-parser openai --enable-prefix-caching
+vllm serve dayoon/LiveLedger-4B --port 8100 --max-model-len 32768 \
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3
+
+# 4. run both arms on all 484 questions
+python liveledger/run.py -m openai/gpt-oss-120b --base_url http://localhost:8000/v1 --tool_arg_fix \
+  --ledger_base_url http://localhost:8100/v1 -o outputs/gpt-oss-120b_liveledger
+python liveledger/run.py -m openai/gpt-oss-120b --base_url http://localhost:8000/v1 --tool_arg_fix \
+  --no_ledger -o outputs/gpt-oss-120b
 ```
 
-### 1. Start vLLM Server
+Then evaluate:
 
 ```bash
-# Qwen3.5-27B (8 GPUs)
-vllm serve Qwen/Qwen3.5-27B --port 8000 --tensor-parallel-size 8 \
-  --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder \
-  --enable-prefix-caching --enforce_eager
+python epistemic_ledger/build_ledger.py -i outputs -a gpt-oss-120b gpt-oss-120b_liveledger -o ledgers
+python epistemic_ledger/judge.py --ledger_dir ledgers -a gpt-oss-120b gpt-oss-120b_liveledger
+python epistemic_ledger/metrics.py --ledger_dir ledgers
 ```
 
-### 2. Run LiveLedger Agent
+`metrics.py` prints one row per agent: `Acc`, `UAR`, then `Verified / Assumed / Refuted / Unchecked`.
 
-```bash
-cd liveledger
-python run.py \
-  --model_name Qwen/Qwen3.5-27B \
-  -o outputs \
-  -w 4 \
-  -d browsecomp frames deepsearchqa
-```
+> **Try it small first:** add `-d frames --indices 0 1 2` to `run.py` (3 questions).
+> Every script **skips finished items**, so re-running the same command resumes it.
 
-### 3. Run Baseline (without ledger)
+---
 
-```bash
-cd liveledger
-python run_baseline.py --model_name Qwen/Qwen3.5-27B -o outputs_baseline -d browsecomp
-```
+## Paper settings
 
-### 4. Run Tag-Based Baselines
+Defaults of `run.py` = the paper: **30 tool-calling turns**, no forced answer at the cap, temperature 1.0,
+reasoning effort `high`, all 484 questions. Add `--ledger_base_url ...` for **+ LiveLedger**, or `--no_ledger` for the base agent.
 
-```bash
-cd baselines
-python run_tag_search.py -b search-r1 -d browsecomp frames --search_engine serper
-```
+| Agent | Extra flags |
+|---|---|
+| gpt-oss-20b / gpt-oss-120b (vLLM) | `-m openai/gpt-oss-120b --base_url http://localhost:8000/v1 --tool_arg_fix` |
+| DeepSeek-V4-Pro (OpenRouter) | `-m deepseek/deepseek-v4-pro --base_url https://openrouter.ai/api/v1 --api_key env:OPENROUTER_API_KEY --openrouter --effort_control openrouter --openrouter_provider_json '{"order":["novita","siliconflow"],"allow_fallbacks":false,"quantizations":["fp8"]}'` |
+| GLM-5.2 (OpenRouter) | `-m z-ai/glm-5.2 --base_url https://openrouter.ai/api/v1 --api_key env:OPENROUTER_API_KEY --openrouter --effort_control openrouter` (+ LiveLedger arm: also `--ledger_feedback off`) |
+| Agents-A1 (vLLM) | `-m InternScience/Agents-A1 --base_url http://localhost:8000/v1 --sampling server --effort_control qwen_thinking --replay_reasoning` (serve with `--max-model-len 131072 --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3`) |
 
-Supported: `search-r1`, `smartsearch`, `rag-r1`, `reseek`, `hiprag`
+Evaluation: `gpt-5-nano` builds the ledger (reasoning effort `medium`, first 30 turns), `gpt-5.6-sol` judges the answer.
+These are the defaults of `build_ledger.py` and `judge.py`.
 
-### 5. Evaluate
+Trained agents (Search-R1, ASearcher, RAG-R1, DR-Tulu, WebExplorer, TongyiDR) and Search-o1 run with their own code;
+`baselines/run_tag_search.py` runs the tag-based ones. `build_ledger.py` reads their saved trajectories as
+`<input_dir>/<agent>/<dataset>.jsonl` (format and examples: `baselines/results/`).
 
-```bash
-# LiveLedger outputs (ledger already built inline)
-python run_evaluation.py --output_dir liveledger/outputs --has_ledger
+---
 
-# Baseline outputs (build ledger post-hoc, then evaluate)
-python run_evaluation.py --output_dir baselines/outputs/search-r1 \
-  --baseline_name search-r1 --base_url http://localhost:8000/v1
-```
+## I want to …
 
-### 6. SFT Training
+| … | Do this |
+|---|---|
+| run one benchmark only | `-d browsecomp` (`browsecomp`, `deepsearchqa`, `frames`, `livedrbench`, `webwalkerqa`, `bioasq`) |
+| run a few questions | `--indices 0 1 2` |
+| run more questions in parallel | `-w 20` (`run.py`), `-w 128` (`build_ledger.py`), `--workers 128` (`judge.py`) |
+| force a final answer at the turn cap | `--forced_final` (the paper does **not**; `metrics.py` counts such answers as no answer) |
+| use a different tracker server or model | `--ledger_base_url http://host:port/v1 --ledger_model_name <name>` |
+| evaluate with a local model instead of OpenAI | `--model_name <name> --base_url http://localhost:8000/v1 --api_key EMPTY` (both `build_ledger.py` and `judge.py`) |
+| see results per benchmark | `python epistemic_ledger/metrics.py --ledger_dir ledgers --per_dataset` |
+| save the table | `--out_csv results.csv` |
+| evaluate another agent's trajectories | save them as `<dir>/<agent>/<dataset>.jsonl` with `output = {thinking_blocks, query_blocks, results_blocks}` and run the 3 evaluation commands with `-i <dir> -a <agent>` |
+| train the tracker | see [`training/`](training/) |
 
-```bash
-cd liveledger/train
-python curate_sft_data.py --input_dir ../outputs --output_dir sft_data
-python train_sft.py --model_name Qwen/Qwen3.5-27B --dataset_path sft_data
-python eval_checkpoint.py --checkpoint_dir output/checkpoint-xxx -d browsecomp
-```
+---
 
-## Supported Datasets
+## Words used
 
-```
-browsecomp      # Browse & compose multi-hop questions
-deepsearchqa    # Deep research questions requiring synthesis
-frames          # Multi-constraint factual questions
-livedrbench     # Real-time information retrieval
-webwalkerqa     # Web navigation questions
-bioasq          # Biomedical question answering
-```
+| Word | Meaning |
+|---|---|
+| **constraint** | one condition the answer must meet (e.g. "erected in the 19th century") |
+| **Epistemic Ledger** | per (candidate, constraint): what the retrieved evidence shows (`obj` = true / false / null) and what the agent states (`per`) |
+| **committed candidate** | the answer candidate the agent ends with |
+| **Verified** | evidence establishes the constraint |
+| **Assumed** | no evidence, but the agent states it holds |
+| **Refuted** | evidence contradicts the constraint, but the answer is kept |
+| **Unchecked** | no evidence, and the agent never addresses it |
+| **UAR** | unsubstantiated answer rate: % of questions whose final answer is not fully verified (no answer counts too) |
+| **LiveLedger** | the 4B tracker: after every `search` / `browse` it updates the ledger and shows it to the agent as a table |
 
-Dataset files: `datasets/{dataset_name}/test_mcqa.jsonl`
+---
 
-## Epistemic Ledger Concept
+## Outputs
 
-An epistemic ledger tracks verification status for each (candidate, constraint) pair:
+| File | Written by | Contents |
+|---|---|---|
+| `outputs/<agent>/<dataset>/<i>.json` | `run.py` | full transcript, per-turn records, every ledger update, final answer (`content`), `termination` |
+| `outputs/<agent>/run_meta.json` | `run.py` | all settings + the exact system prompt |
+| `ledgers/<agent>/<dataset>/item_<i>.json` | `build_ledger.py`, `judge.py` | checklist, per-turn ledgers, `is_correct` |
 
-```python
-ledger = {
-    "candidate": {
-        "constraints": {
-            "C1": {
-                "obj": true,              # Objective: proven with evidence
-                "obj_evidence": "quote",  # Supporting evidence
-            }
-        }
-    }
-}
-```
+`termination` = `answered`, `turn_cap` (no answer within 30 turns) or `agent_error`.
 
-**Verification Status:**
-- `obj=true`: Proven with evidence
-- `obj=false`: Disproven with evidence  
-- `obj=null`: No evidence found
+---
 
-**Failure Modes:**
-- `obj=null, per=true`: **Bare Assertion** (claim without evidence)
-- `obj=false, per=true`: **Overlooked Refutation** (ignoring contradictory evidence)
-- No progress 3+ turns: **Stagnation**
-- Exit with unverified: **Premature Exit**
+## Previous version
 
-## Requirements
-
-### System
-- Python 3.8+
-- CUDA-compatible GPU (80GB+ VRAM for large models)
-
-### API Keys
-- **Serper**: Web search ([serper.dev](https://serper.dev))
-- **Jina Reader**: Web content ([jina.ai/reader](https://jina.ai/reader))
+The code for arXiv v1 (February 2026) is under the git tag [`v1`](https://github.com/dayoon-ko/illusory_completion/tree/v1).
 
 ## Citation
 
 ```bibtex
 @misc{ko2026enoughillusorycompletionsearch,
-      title={When Is Enough Not Enough? Illusory Completion in Search Agents}, 
+      title={When Is Enough Not Enough? Illusory Completion in Search Agents},
       author={Dayoon Ko and Jihyuk Kim and Sohyeon Kim and Haeju Park and Dahyun Lee and Gunhee Kim and Moontae Lee and Kyungjae Lee},
       year={2026},
       eprint={2602.07549},
       archivePrefix={arXiv},
       primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2602.07549}, 
+      url={https://arxiv.org/abs/2602.07549},
 }
 ```
 
 ## License
 
-Apache 2.0
+Apache 2.0. The questions in `datasets/` come from BrowseComp, DeepSearchQA, FRAMES, LiveDRBench, WebWalkerQA and BioASQ; their own licenses apply.
 
 ## Contact
 
-- Paper: [https://arxiv.org/abs/2602.07549](https://arxiv.org/abs/2602.07549)
-- Email: dayoon.ko@vision.snu.ac.kr
+Dayoon Ko · dayoon.ko@vision.snu.ac.kr

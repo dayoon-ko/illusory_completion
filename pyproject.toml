@@ -1,17 +1,16 @@
 [project]
 name = "illusory-completion"
-version = "0.1.0"
-description = "Epistemic ledger framework for detecting illusory completions in search agents"
-requires-python = ">=3.11"
+version = "2.0.0"
+description = "Epistemic Ledger evaluation and the LiveLedger tracker for search agents (arXiv 2602.07549 v2)"
+requires-python = ">=3.10"
 dependencies = [
-    "openai",
+    "openai>=1.40",
     "httpx",
     "requests",
-    "torch>=2.4.0",
-    "transformers",
-    "datasets",
-    "tqdm",
     "urllib3",
-    "ms-swift",
-    "accelerate",
+    "tqdm",
 ]
+
+[project.optional-dependencies]
+baselines = ["torch>=2.4.0", "transformers"]
+train = ["torch>=2.4.0", "transformers", "datasets", "accelerate", "ms-swift", "deepspeed"]
