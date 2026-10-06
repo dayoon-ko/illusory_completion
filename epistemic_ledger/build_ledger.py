@@ -1,74 +1,94 @@
+"""Build the Epistemic Ledger for agent trajectories (paper setting: gpt-5-nano, reasoning effort medium, first 30 turns).
+
+Input  (--input_dir), either layout per agent:
+  <input_dir>/<agent>/<dataset>/<index>.json   output of liveledger/run.py (converted on the fly)
+  <input_dir>/<agent>/<dataset>.jsonl          one trajectory per line, "output" = {thinking_blocks, query_blocks,
+                                               results_blocks} (or a raw Search-R1 / RAG-R1 string, see below)
+Output: <output_dir>/<agent>/<dataset>/item_<index>.json   (input fields + checklist, ledger, ledger_pairs).
+Finished items are skipped, so the same command resumes.
+
+    export OPENAI_API_KEY=...
+    python epistemic_ledger/build_ledger.py -i outputs -a gpt-oss-120b_liveledger -o ledgers
+"""
+import copy
 import json
 import os
 import re
 import time
-from typing import Dict, List, Optional, Any, Tuple 
-
-from openai import OpenAI
 from argparse import ArgumentParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from glob import glob
+from typing import Any, Dict, List, Optional, Tuple
+
+import openai
+from openai import OpenAI
 from tqdm import tqdm
 
 from prompts import prompt_checklist_generation, prompt_obj_ledger_update, prompt_per_ledger_update
 
+DATASETS = ["browsecomp", "deepsearchqa", "frames", "livedrbench", "webwalkerqa", "bioasq"]
+
+# Agents whose saved trajectories need special block extraction (matched on the agent name, run suffix _2/_3 ignored)
+BASELINES_RAW_TRAJECTORY = ["search-r1", "rag-r1", "hds", "hds-grpo"]   # one raw string with <think>/<search>/... tags
+BASELINES_TAO_S1 = ["react_s1"]  # filters invalid tool calls
+BASELINES_TAOT = ["dr-tulu"]  # pre-separated prev/next thinking
+
+
+def parse_trailing_json(output: str):
+    """Some servers put commentary prose in front of the final JSON in `content`. Accept a JSON object only if it
+    runs to the END of the content, else raise so the call is retried."""
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        s = output.rstrip()
+        dec = json.JSONDecoder()
+        for i, ch in enumerate(s):
+            if ch == "{":
+                try:
+                    obj, end = dec.raw_decode(s, i)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict) and s[end:].strip() == "":
+                    PARSE_STATS["trailing_json_recovered"] += 1
+                    return obj
+        PARSE_STATS["unparseable"] += 1
+        raise
+
+
+PARSE_STATS = {"trailing_json_recovered": 0, "unparseable": 0}
+
+
 # =============================================================================
-# Constants
+# Ledger evaluator
 # =============================================================================
 
-# Known baselines with specific handling
-KNOWN_BASELINES = [
-    "search-r1", "search-r1_2", "search-r1_3", 
-    "rag-r1", "rag-r1_2", "rag-r1_3", 
-    "asearcher", "asearcher_2", "asearcher_3", 
-    "dr-tulu", "dr-tulu_2", "dr-tulu_3",
-    "webexplorer", "webexplorer_2", "webexplorer_3", 
-    "search_o1_gpt-oss-20b", "search_o1_gpt-oss-20b_2", "search_o1_gpt-oss-20b_3", 
-    "search_o1_gpt-oss-120b", "search_o1_gpt-oss-120b_2", "search_o1_gpt-oss-120b_3",   
-    "tongyidr", "tongyidr_2", "tongyidr_3", 
-    "tongyidr-liveledger-4B", "tongyidr-liveledger-4B_2", "tongyidr-liveledger-4B_3", 
-    "react_20B", "react_20B_2", "react_20B_3",
-    "react_20B_liveledger_4B", "react_20B_liveledger_4B_2", "react_20B_liveledger_4B_3",
-    "react", "react_2", "react_3",
-    "react_s1", "react_s1_2", "react_s1_3",
-    "react_120B_liveledger_4B", "react_120B_liveledger_4B_2", "react_120B_liveledger_4B_3",
-]
-
-DATASET_CHOICES = ["all", "deepsearchqa", "browsecomp", "frames", "livedrbench", "webwalkerqa", "bioasq"]
-
-# Baseline groups for block extraction (only for baselines requiring special handling)
-BASELINES_RAW_TRAJECTORY = ["search-r1", "rag-r1", "hds", "hds-grpo"]
-BASELINES_TAO_S1 = ["react_s1"]  # Filters invalid tool calls
-BASELINES_TAOT = ["dr-tulu"]  # Pre-separated prev/next thinking
-
-
-# =============================================================================
-# JudgeAgent Class
-# =============================================================================
-
-class JudgeAgent:
-    """
-    A judge agent that evaluates answers based on constraint checklists
-    and epistemic ledger tracking. Follows the same process as the existing
-    checklist verification pipeline.
-    """
+class LedgerEvaluator:
+    """Builds the Epistemic Ledger of one trajectory: a constraint checklist from the question, then, for every
+    (thinking, query, result, next thinking) block, an obj pass (what the retrieved text establishes) and a per pass
+    (what the agent states it believes)."""
     
     def __init__(
         self,
-        model_name: str = "openai/gpt-oss-120b",
-        base_url: str = "http://localhost:8000/v1",
+        model_name: str = "gpt-5-nano",
+        base_url: str = "https://api.openai.com/v1",
         api_key: str = "EMPTY",
-        reasoning_effort: Optional[str] = None
+        reasoning_effort: Optional[str] = None,
+        max_retries: int = 0
     ):
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
         self.reasoning_effort = reasoning_effort
+        # 0 = retry forever (fine for a local vLLM). Keep > 0 for a paid API, so an
+        # unparseable-response loop cannot bill forever.
+        self.max_retries = max_retries
         self._client = None
         
         # State
         self.question = None
         self.checklist = None
         self.ledger = []
+        self.update_failures = []
     
     @property
     def client(self) -> OpenAI:
@@ -85,7 +105,10 @@ class JudgeAgent:
         extra_body = {}
         if self.reasoning_effort is not None:
             extra_body["reasoning_effort"] = self.reasoning_effort
+        attempt = 0
+        rate_waits = 0
         while True:
+            response = None
             try:
                 response = self.client.chat.completions.create(
                     model=self.model_name,
@@ -94,10 +117,28 @@ class JudgeAgent:
                 )
                 output = response.choices[0].message.content
                 output = output.replace("```json", "").replace("```", "")
-                return json.loads(output)
+                parsed = parse_trailing_json(output)
+                if not isinstance(parsed, dict):
+                    # checklist and ledgers must be JSON objects (a list breaks the next turn's ledger)
+                    raise ValueError(f"expected a JSON object, got {type(parsed).__name__}")
+                return parsed
+            except openai.RateLimitError as e:
+                # rate limits (HTTP 429): back off, do not count as a retry
+                rate_waits += 1
+                print(f"RateLimitError (wait {rate_waits}): {str(e)[:160]}")
+                time.sleep(min(5 * rate_waits, 60))
+                continue
             except Exception as e:
-                print(e)
-                time.sleep(1)
+                attempt += 1
+                try:
+                    _c = response.choices[0].message.content
+                    print(f"{type(e).__name__}: {e} | finish={response.choices[0].finish_reason} | content[:160]={(_c or '')[:160]!r} | tail={(_c or '')[-80:]!r}")
+                except Exception:
+                    print(e)
+                if self.max_retries and attempt >= self.max_retries:
+                    raise RuntimeError(
+                        f"call_llm failed {attempt}x (last: {type(e).__name__}: {e})") from e
+                time.sleep(min(1 * attempt, 10))
     
     def generate_checklist(self, item: Dict, is_call_llm: bool = True) -> Dict[str, Dict[str, str]]:
         """Generate a constraint checklist from a question."""
@@ -105,10 +146,15 @@ class JudgeAgent:
         
         if is_call_llm:
             prompt = prompt_checklist_generation.format(question=self.question)
+            attempt = 0
             while True:
                 checklist = self.call_llm(prompt)
-                if all("constraint" in c.keys() for c in checklist.values()):
-                    break 
+                if all(isinstance(c, dict) and "constraint" in c for c in checklist.values()):
+                    break
+                attempt += 1
+                if self.max_retries and attempt >= self.max_retries:
+                    raise RuntimeError(
+                        f"checklist generation malformed {attempt}x: {checklist}")
                 print(f"Error: Checklist generation failed. Retrying... {checklist}")
             self.checklist = {"candidate": None, "checklist": checklist}
         else:
@@ -148,7 +194,13 @@ class JudgeAgent:
             next_thinking=next_thinking,
             question=self.question
         )
-        updated_obj_ledger = self.call_llm(prompt)
+        try:
+            updated_obj_ledger = self.call_llm(prompt)
+        except RuntimeError as e:
+            # retries exhausted (e.g. the model answers in prose instead of JSON): keep the previous ledger for this
+            # block instead of dropping the whole item; recorded in item["ledger_update_failures"]
+            self.update_failures.append({"block": len(self.ledger), "step": "obj", "error": str(e)[:300]})
+            updated_obj_ledger = copy.deepcopy(current_ledger)
         
         # Step 2: Update perceptual ledger
         prompt = prompt_per_ledger_update.format(
@@ -160,7 +212,11 @@ class JudgeAgent:
             next_thinking=next_thinking,
             question=self.question
         )
-        updated_per_ledger = self.call_llm(prompt)
+        try:
+            updated_per_ledger = self.call_llm(prompt)
+        except RuntimeError as e:
+            self.update_failures.append({"block": len(self.ledger), "step": "per", "error": str(e)[:300]})
+            updated_per_ledger = copy.deepcopy(updated_obj_ledger)
         
         self.ledger.append(updated_per_ledger)
         self.ledger_pairs.append((updated_obj_ledger, updated_per_ledger))
@@ -169,6 +225,7 @@ class JudgeAgent:
         """Process a full trajectory and build the ledger."""
         self.ledger = []
         self.ledger_pairs = []
+        self.update_failures = []
         
         for idx, (prev_thinking, query, result, next_thinking) in enumerate(blocks):
             self.update_ledger(
@@ -424,7 +481,7 @@ def extract_blocks_for_baseline(item, baseline_name):
 # Processing Functions
 # =============================================================================
 
-def process_item(item, model_name, baseline_name, output_path, base_url="http://localhost:8000/v1", max_turns=None, is_save_blocks=False, reasoning_effort=None):
+def process_item(item, model_name, baseline_name, output_path, base_url="https://api.openai.com/v1", max_turns=None, is_save_blocks=False, reasoning_effort=None, api_key="EMPTY", max_retries=0):
     """Process a single item: generate checklist and build ledger."""
     
     # Validation
@@ -439,7 +496,8 @@ def process_item(item, model_name, baseline_name, output_path, base_url="http://
     print(f"Processing {output_path}")
     
     # Initialize judge agent
-    judge = JudgeAgent(model_name=model_name, base_url=base_url, reasoning_effort=reasoning_effort)
+    judge = LedgerEvaluator(model_name=model_name, base_url=base_url, reasoning_effort=reasoning_effort,
+                       api_key=api_key, max_retries=max_retries)
     
     # Step 1: Generate checklist
     judge.generate_checklist(item)
@@ -460,6 +518,8 @@ def process_item(item, model_name, baseline_name, output_path, base_url="http://
     item["checklist"] = judge.checklist
     item["ledger"] = judge.ledger
     item["ledger_pairs"] = judge.ledger_pairs
+    if judge.update_failures:
+        item["ledger_update_failures"] = judge.update_failures
     
     with open(output_path, "w") as f:
         json.dump(item, f, indent=2)
@@ -470,97 +530,109 @@ def process_item(item, model_name, baseline_name, output_path, base_url="http://
 
 
 # =============================================================================
-# Argument Parser
+# liveledger/run.py output -> blocks
 # =============================================================================
 
-def get_args():
-    parser = ArgumentParser()
-    parser.add_argument(
-        "--baseline_name", "-b",
-        nargs="+", type=str,
-        default=KNOWN_BASELINES,
-        help=f"Baseline names. Known: {KNOWN_BASELINES}. Any baseline with standard TAO format is also supported."
-    )
-    parser.add_argument(
-        "--dataset_name", "-d",
-        nargs="+", type=str,
-        default=["frames", "browsecomp", "livedrbench", "deepsearchqa", "webwalkerqa", "bioasq"],
-        choices=DATASET_CHOICES
-    )
-    parser.add_argument("--base_url", type=str, default="http://localhost:8000/v1")
-    parser.add_argument("--num_try", type=int, default=0)
-    parser.add_argument("--input_dir", type=str, default="../baselines/results")
-    parser.add_argument("--output_dir", "-o", type=str, default="epistemic_ledger")
-    parser.add_argument("--model_name", type=str, default="openai/gpt-oss-120b")
-    parser.add_argument("--max_turns", type=int, default=30)
-    parser.add_argument("--is_save_blocks", action="store_true", default=False)
-    parser.add_argument("--max_workers", "-w", type=int, default=64)
-    parser.add_argument(
-        "--reasoning_effort", type=str, default="medium",
-        choices=["low", "medium", "high"],
-        help="Reasoning effort for gpt-oss models (passed via extra_body to vLLM)."
-    )
-    return parser.parse_args()
+def _think(rec):
+    parts = [rec.get("reasoning") or "", rec.get("content") or ""]
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def convert_runner_output(d):
+    """One (thinking, query, result) block per tool call; the first tool call of an assistant turn carries that turn's
+    reasoning + content, and the last thinking block is the final answer content."""
+    thinking, queries, results = [], [], []
+    final_think = ""
+    for rec in d["turn_records"]:
+        if rec["kind"] == "tool_call":
+            for j, (tc, res) in enumerate(zip(rec["tool_calls"], rec["tool_results"])):
+                thinking.append(_think(rec) if j == 0 else "")
+                if tc["name"] == "search":
+                    queries.append("Search: " + json.dumps(tc["arguments"].get("query", tc["arguments"])))
+                elif tc["name"] == "browse":
+                    queries.append("Browse: " + json.dumps(json.dumps(tc["arguments"])))
+                else:
+                    queries.append("Invalid tool call")
+                results.append(res)
+        elif rec["kind"] in ("answer", "forced_final"):
+            final_think = rec.get("content") or ""
+    thinking.append(final_think)
+    return {"thinking_blocks": thinking, "query_blocks": queries, "results_blocks": results}
+
+
+def runner_item(raw):
+    return {"question": raw["question"], "answer": raw["answer"], "content": raw.get("content", "") or "",
+            "prediction": raw.get("prediction", ""), "messages": raw.get("messages", []), "turns": raw.get("turns"),
+            "termination": raw.get("termination"), "status": raw.get("status"), "dataset": raw.get("dataset"),
+            "index": raw.get("index"), "output": convert_runner_output(raw)}
+
+
+def load_items(input_dir, agent, dataset):
+    """[(index, item)] from either input layout."""
+    per_item_dir = os.path.join(input_dir, agent, dataset)
+    jsonl = os.path.join(input_dir, agent, f"{dataset}.jsonl")
+    if os.path.isdir(per_item_dir):
+        out = []
+        for p in glob(os.path.join(per_item_dir, "*.json")):
+            name = os.path.basename(p)[:-5]
+            if name.isdigit():
+                out.append((int(name), runner_item(json.load(open(p)))))
+        return sorted(out, key=lambda x: x[0])
+    if os.path.exists(jsonl):
+        with open(jsonl) as f:
+            return [(i, json.loads(line)) for i, line in enumerate(f.read().split("\n")) if line.strip()]
+    return []
 
 
 # =============================================================================
 # Main
 # =============================================================================
 
+def get_args():
+    p = ArgumentParser()
+    p.add_argument("--input_dir", "-i", required=True)
+    p.add_argument("--agents", "-a", nargs="+", required=True, help="sub-folder names under --input_dir")
+    p.add_argument("--datasets", "-d", nargs="+", default=DATASETS, choices=DATASETS)
+    p.add_argument("--output_dir", "-o", default="ledgers")
+    p.add_argument("--model_name", default="gpt-5-nano")
+    p.add_argument("--base_url", default="https://api.openai.com/v1")
+    p.add_argument("--api_key", default=os.environ.get("OPENAI_API_KEY", "EMPTY"))
+    p.add_argument("--reasoning_effort", default="medium", choices=["low", "medium", "high"])
+    p.add_argument("--max_retries", type=int, default=5,
+                   help="per-call retry cap; 0 = unlimited (only for a local vLLM server)")
+    p.add_argument("--max_turns", type=int, default=30, help="blocks evaluated per trajectory")
+    p.add_argument("--max_workers", "-w", type=int, default=64)
+    return p.parse_args()
+
+
 def main(args):
-    # Step 1: Collect all tasks from all baseline + dataset combinations
-    all_tasks = []
-    
-    for baseline_name in args.baseline_name:
-        for dataset_name in args.dataset_name:
-            input_path = f"{args.input_dir}/{baseline_name}/{dataset_name}.jsonl"
-            output_dir = f"{args.output_dir}/{baseline_name}/{dataset_name}"
-            
-            if args.num_try >= 1:
-                input_path = input_path.replace(".jsonl", f"_{args.num_try}.jsonl")
-                output_dir = output_dir + f"_{args.num_try}"
-            
-            if not os.path.exists(input_path):
-                print(f"Skipping {input_path} because it does not exist")
+    tasks = []
+    for agent in args.agents:
+        for ds in args.datasets:
+            items = load_items(args.input_dir, agent, ds)
+            if not items:
+                print(f"no trajectories for {agent}/{ds}")
                 continue
-            
-            os.makedirs(output_dir, exist_ok=True)
-            
-            with open(input_path, "r") as f:
-                data = [json.loads(line) for line in f.readlines()]
-            
-            for idx, item in enumerate(data):
-                output_path = f"{output_dir}/item_{idx}.json"
-                all_tasks.append({
-                    "item": item,
-                    "model_name": args.model_name,
-                    "baseline_name": baseline_name,
-                    "output_path": output_path,
-                    "max_turns": args.max_turns,
-                    "is_save_blocks": args.is_save_blocks
-                })
-    
-    print(f"Total tasks collected: {len(all_tasks)}")
-    
-    # Step 2: Process all tasks with ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-        futures = {
-            executor.submit(
-                process_item,
-                task["item"],
-                task["model_name"],
-                task["baseline_name"],
-                task["output_path"],
-                base_url=args.base_url,
-                max_turns=task["max_turns"],
-                is_save_blocks=task["is_save_blocks"],
-                reasoning_effort=args.reasoning_effort
-            ): task for task in all_tasks
-        }
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing all datasets"):
-            output = future.result()
+            out_dir = os.path.join(args.output_dir, agent, ds)
+            os.makedirs(out_dir, exist_ok=True)
+            tasks += [(item, agent, os.path.join(out_dir, f"item_{idx}.json")) for idx, item in items]
+    print(f"{len(tasks)} trajectories")
+    n_fail = 0
+    with ThreadPoolExecutor(max_workers=args.max_workers) as ex:
+        futures = {ex.submit(process_item, item, args.model_name, agent, path, base_url=args.base_url,
+                             max_turns=args.max_turns, reasoning_effort=args.reasoning_effort,
+                             api_key=args.api_key, max_retries=args.max_retries): path
+                   for item, agent, path in tasks}
+        for fut in tqdm(as_completed(futures), total=len(futures)):
+            try:
+                fut.result()
+            except Exception as e:  # one failed item must not stop the run
+                n_fail += 1
+                print(f"FAILED {futures[fut]}: {type(e).__name__}: {e}")
+    if n_fail:
+        print(f"{n_fail}/{len(futures)} items failed; re-run the same command to retry them.")
+    print("PARSE_STATS", PARSE_STATS)
 
 
 if __name__ == "__main__":
-    args = get_args()
-    main(args)
+    main(get_args())

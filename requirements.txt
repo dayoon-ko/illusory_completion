@@ -1,10 +1,9 @@
-openai
+# run agents (liveledger/) and evaluate (epistemic_ledger/)
+openai>=1.40
 httpx
 requests
-torch>=2.4.0
-transformers
-datasets
-tqdm
 urllib3
-ms-swift
-accelerate
+tqdm
+# serving the agent / tracker: pip install vllm   (GPU machine)
+# baselines/run_tag_search.py: pip install torch transformers
+# training/: see training/README.md

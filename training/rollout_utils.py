@@ -1,3 +1,4 @@
+"""Helpers for 1_collect_rollouts.py: ledger with stagnation counter, tool state machine, logging."""
 import json
 from typing import Any, Dict, List, Tuple
 
@@ -54,6 +55,7 @@ def log_event(label: str, text: str, color: str, entire: bool = False) -> None:
     print()
 
 
+
 class AgentStateMachine:
     """State machine for three-phase approach."""
     
@@ -108,7 +110,8 @@ class AgentStateMachine:
             return "✅ **State: COMPLETE** - All constraints verified, you may answer with \\boxed{...}"
         return ""
     
-
+    
+    
 
 class EpistemicLedger:
     """Manages the epistemic ledger."""
@@ -119,6 +122,16 @@ class EpistemicLedger:
         self.stagnation_count = 0
     
     def set_constraints(self, constraint_list: List[str]) -> None:
+        # Guard: the model sometimes returns the constraints array double-encoded
+        # as a single JSON string (e.g. '["English monarch", "Reigned after ..."]')
+        # instead of a real list. Without this, enumerate() iterates the string
+        # character-by-character and produces bogus C1: [, C2: ", ... entries.
+        if isinstance(constraint_list, str):
+            try:
+                parsed = json.loads(constraint_list)
+                constraint_list = parsed if isinstance(parsed, list) else [constraint_list]
+            except (json.JSONDecodeError, ValueError):
+                constraint_list = [constraint_list]
         self.constraints = {f"C{i+1}": c for i, c in enumerate(constraint_list)}
         
     def get_stagnation_count(self) -> int:
@@ -131,6 +144,7 @@ class EpistemicLedger:
         self.stagnation_count += 1
         
     def update(self, entries: List[Dict[str, Any]]) -> None:
+        # Called only when len(entries) > 0
         candidates = []
         for entry in entries:
             if not isinstance(entry, dict):
@@ -179,6 +193,8 @@ class EpistemicLedger:
         feedbacks = []
         
         for candidate, data in self.ledger.items():
+            # Format only the entities if provided
+            
             lines.append(f"\n**{candidate}**")
             lines.append("| Constraint | obj | obj_evidence |")
             lines.append("|------------|-----|--------------|")

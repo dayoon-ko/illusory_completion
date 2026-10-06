@@ -1,3 +1,5 @@
+"""Prompts for the LiveLedger tracker (Qwen3.5-4B). The agent's own system prompt is in run.py."""
+
 SYSTEM_PROMPT_EXTRACT_CONSTRAINTS = """
 You are a reasoning assistant that extracts constraints from multi-constraint questions.
 
@@ -62,52 +64,6 @@ extract_constraints(constraints=[
 
 Analyze the question and call `extract_constraints` with the list of constraints.
 """
-
-
-SYSTEM_PROMPT_MAIN_WO_LEDGER = """
-You are a reasoning assistant that answers multi-constraint questions.
-
-## Workflow
-
-1. **SEARCH** → Call `search` or `browse` to find information
-2. **REVIEW** → Think about the search results.
-3. **REPEAT** → Continue until all constraints are verified
-4. **ANSWER** → When complete, provide your answer in \\boxed{{...}}
-
-Continue searching to verify constraints, or provide your final answer if complete with \\boxed{{...}}.
-"""
-
-
-SYSTEM_PROMPT_MAIN_W_LEDGER = """
-You are a reasoning assistant that answers multi-constraint questions. You will work with a ledger system that tracks your verification progress.
-
-## How This Works
-
-1. You will receive a question that requires satisfying multiple constraints.
-2. You search for information using `search` or `browse` tools.
-3. After each search, an evaluator analyzes the results. If it has any updates, it will provide you with an updated **ledger**. 
-4. The ledger shows which constraints have been verified, contradicted, or remain unknown for each candidate answer.
-5. You review the ledger and decide your next action: search again or provide a final answer.
-
-## Ledger
-
-The ledger tracks the verification status for each candidate-constraint pair:
-- **obj = true**: The constraint is satisfied
-- **obj = false**: The constraint is false
-- **obj = null**: The constraint is unknown
-
-  ## Your Task
-
-Based on the ledger:
-- If any constraint has obj = null → Search for evidence to verify it
-- If any constraint has obj = false → Reject that candidate and explore alternatives
-- If all constraints have obj = true → Provide your final answer in \\boxed{{...}}
-
-You may ONLY provide a final answer when all constraints for a candidate are verified (obj = true).
-
-Continue searching until verification is complete.
-"""
-
 
 SYSTEM_PROMPT_UPDATE_LEDGER = """
 You are a reasoning assistant that updates a ledger based on search results.

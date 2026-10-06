@@ -1,3 +1,5 @@
+"""Evaluator prompts: constraint checklist, objective (evidence) ledger update, perceived (belief) ledger update."""
+
 prompt_checklist_generation = """Please extract explicit, externally verifiable constraints from a question that an answer must satisfy.
 
 Your task is to read a question and produce a constraint list in JSON format. 
@@ -76,7 +78,6 @@ Output:
 
 Output:
 """
-
 
 prompt_obj_ledger_update = """You are an Objective Evidence Ledger Annotator. Your ONLY job is to update `null` `obj` and `obj_evidence` values for each Candidate × constraint using ONLY the Search Results.
 
@@ -212,7 +213,6 @@ The answer is in Europe, has 67 million people, uses the Pound. I'll answer UK.
 
 ## Output
 """
-
 
 prompt_per_ledger_update = """You are a Perception & Status Ledger Annotator. Your ONLY job is to update:
 - candidate `status` (active|stored|rejected)
